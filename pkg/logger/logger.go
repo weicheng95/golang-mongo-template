@@ -1,6 +1,10 @@
 // ------------------------------------------------------------
 // Copyright (c) Microsoft Corporation and Contributors.
 // Licensed under the MIT License.
+// EXAMPLE:
+// log.WithLogFields(logger.Fields{
+// 	"animal": "walrus",
+// }).Info("init successful")
 // ------------------------------------------------------------
 
 package logger

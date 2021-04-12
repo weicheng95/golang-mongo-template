@@ -12,7 +12,9 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/weicheng95/go-mongo-template/internal/envvar"
+	"github.com/weicheng95/go-mongo-template/internal/mongodb"
 	"github.com/weicheng95/go-mongo-template/pkg/logger"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 var (
@@ -31,9 +33,7 @@ func main() {
 	flag.StringVar(&env, "env", ".env", "Environment Variables filename")
 	flag.StringVar(&address, "address", ":8000", "HTTP Server Address")
 	flag.Parse()
-	log.WithLogFields(logger.Fields{
-		"animal": "walrus",
-	}).Info("init successful")
+
 	errC, err := run(env, address)
 	if err != nil {
 		log.Fatalf("Couldn't run: %s", err)
@@ -61,11 +61,16 @@ func run(env, address string) (<-chan error, error) {
 		})
 	}
 
-	//-
+	// database init
+	db, err := mongodb.NewMongoDB()
+	if err != nil {
+		log.Fatalf("%+v", err)
+	}
 
 	errC := make(chan error, 1)
 
-	server := newServer(address, logging)
+	// server init
+	server := newServer(address, db, logging)
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt,
@@ -108,7 +113,7 @@ func run(env, address string) (<-chan error, error) {
 	return errC, nil
 }
 
-func newServer(address string, mws ...mux.MiddlewareFunc) *http.Server {
+func newServer(address string, db *mongo.Client, mws ...mux.MiddlewareFunc) *http.Server {
 	r := mux.NewRouter()
 
 	for _, mw := range mws {
