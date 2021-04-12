@@ -27,7 +27,6 @@ func NewMongoDB() (*mongo.Client, error) {
 	mongodbPassword := get("MONGODB_PASSWORD")
 
 	var ctx = context.Background()
-	// "mongodb+srv://admin:admin@cluster0.h6dcj.mongodb.net/myFirstDatabase?retryWrites=true&w=majority"
 	mongodbURI := fmt.Sprintf("mongodb+srv://%s:%s@%s/%s?retryWrites=true&w=majority", mongodbUsername, mongodbPassword, mongodbHOST, mongodbDATABASE)
 	clientOptions := options.Client().ApplyURI(mongodbURI)
 	client, err := mongo.Connect(ctx, clientOptions)
