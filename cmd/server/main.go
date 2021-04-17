@@ -1,20 +1,12 @@
 package main
 
 import (
-	"context"
 	"flag"
-	"fmt"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"github.com/gorilla/mux"
-	"github.com/weicheng95/go-mongo-template/internal/envvar"
-	"github.com/weicheng95/go-mongo-template/internal/mongodb"
+	"github.com/go-chi/chi"
+	"github.com/weicheng95/go-mongo-template/initiator"
+	"github.com/weicheng95/go-mongo-template/internal/common/server"
+	"github.com/weicheng95/go-mongo-template/pkg/helper"
 	"github.com/weicheng95/go-mongo-template/pkg/logger"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 var (
@@ -28,113 +20,115 @@ func init() {
 
 func main() {
 
-	var env, address string
+	var env, configFile, address string
 
-	flag.StringVar(&env, "env", ".env", "Environment Variables filename")
+	flag.StringVar(&env, "env", "development", "Environment Variables filename")
+	flag.StringVar(&configFile, "configFile", "config.yaml", "Environment Variables filename")
 	flag.StringVar(&address, "address", ":8000", "HTTP Server Address")
 	flag.Parse()
 
-	errC, err := run(env, address)
-	if err != nil {
-		log.Fatalf("Couldn't run: %s", err)
-	}
-
-	if err := <-errC; err != nil {
-		log.Fatalf("Error while running: %s", err)
-	}
-
-}
-
-func run(env, address string) (<-chan error, error) {
-	if err := envvar.Load(env); err != nil {
-		return nil, fmt.Errorf("envvar.Load %w", err)
-	}
-
-	logging := func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			log.WithLogFields(logger.Fields{
-				"method": r.Method,
-				"url":    r.URL.String(),
-			}).Info()
-
-			h.ServeHTTP(w, r)
-		})
+	if err := helper.Load(env, configFile); err != nil {
+		log.Fatalf("%w", err)
 	}
 
 	// database init
-	db, err := mongodb.NewMongoDB()
-	if err != nil {
-		log.Fatalf("%+v", err)
-	}
+	dbClient := helper.NewMongoDBClient()
 
-	errC := make(chan error, 1)
+	userModule := initiator.UserRestInit(dbClient)
 
-	// server init
-	server := newServer(address, db, logging)
+	// auth module (register, login)
+	r := chi.NewRouter()
+	r.Group(func (r chi.Router) {
+		r.Mount("/auth", userModule.AuthRoutes())
+	})
 
-	ctx, stop := signal.NotifyContext(context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-		syscall.SIGQUIT)
+	// user module
+	r.Group(func (r chi.Router) {
+		r.Use(server.AuthMiddleware{}.Middleware)
+		r.Mount("/user", userModule.UserRoutes())
+	})
 
-	go func() {
-		// this will trigger when Shutdown signal received
-		<-ctx.Done()
-
-		log.Info("Shutdown signal received")
-
-		ctxTimeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-		defer func() {
-			stop()
-			cancel()
-			close(errC)
-		}()
-
-		server.SetKeepAlivesEnabled(false)
-
-		if err := server.Shutdown(ctxTimeout); err != nil {
-			errC <- err
-		}
-
-		log.Info("Shutdown completed")
-	}()
-
-	go func() {
-		log.Info("Listening and serving ", address)
-
-		// "ListenAndServe always returns a non-nil error. After Shutdown or Close, the returned error is
-		// ErrServerClosed."
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errC <- err
-		}
-	}()
-
-	return errC, nil
+	server.RunHTTPServer(address, r)
 }
 
-func newServer(address string, db *mongo.Client, mws ...mux.MiddlewareFunc) *http.Server {
-	r := mux.NewRouter()
-
-	for _, mw := range mws {
-		r.Use(mw)
-	}
-
-	//-
-
-	// repo := postgresql.NewTask(db) // Task Repository
-	// svc := service.NewTask(repo)   // Task Application Service
-
-	// r.Handle("/metrics", metrics)
-
-	//-
-
-	return &http.Server{
-		Handler:           r,
-		Addr:              address,
-		ReadTimeout:       1 * time.Second,
-		ReadHeaderTimeout: 1 * time.Second,
-		WriteTimeout:      1 * time.Second,
-		IdleTimeout:       1 * time.Second,
-	}
-}
+//func run(env, configFile string, address string) (<-chan error, error) {
+//
+//
+//	//logging := func(h http.Handler) http.Handler {
+//	//	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//	//		log.WithLogFields(logger.Fields{
+//	//			"method": r.Method,
+//	//			"url":    r.URL.String(),
+//	//		}).Info()
+//	//
+//	//		h.ServeHTTP(w, r)
+//	//	})
+//	//}
+//
+//
+//
+//	// server init
+//	//server := newServer(address, dbClient, logging)
+//
+//	errC := make(chan error, 1)
+//
+//	ctx, stop := signal.NotifyContext(context.Background(),
+//		os.Interrupt,
+//		syscall.SIGTERM,
+//		syscall.SIGQUIT)
+//
+//	go func() {
+//		// this will trigger when Shutdown signal received
+//		<-ctx.Done()
+//
+//		log.Info("Shutdown signal received")
+//
+//		ctxTimeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//
+//		defer func() {
+//			stop()
+//			cancel()
+//			close(errC)
+//		}()
+//
+//		server.SetKeepAlivesEnabled(false)
+//
+//		if err := server.Shutdown(ctxTimeout); err != nil {
+//			errC <- err
+//		}
+//
+//		log.Info("Shutdown completed")
+//	}()
+//
+//	go func() {
+//		log.Info("Listening and serving ", address)
+//
+//		// "ListenAndServe always returns a non-nil error. After Shutdown or Close, the returned error is
+//		// ErrServerClosed."
+//		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+//			errC <- err
+//		}
+//	}()
+//
+//	return errC, nil
+//}
+//
+//func newServer(address string, client *mongo.Client, mws ...mux.MiddlewareFunc) *http.Server {
+//	r := mux.NewRouter()
+//
+//	for _, mw := range mws {
+//		r.Use(mw)
+//	}
+//
+//	userModule := initiator.UserRestInit(client)
+//	userModule.Register(r)
+//
+//	return &http.Server{
+//		Handler:           r,
+//		Addr:              address,
+//		ReadTimeout:       1 * time.Second,
+//		ReadHeaderTimeout: 1 * time.Second,
+//		WriteTimeout:      1 * time.Second,
+//		IdleTimeout:       1 * time.Second,
+//	}
+//}
